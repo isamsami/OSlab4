@@ -1,124 +1,126 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 
+#define TOTAL_MEMORY 256
+#define TIME_QUANTUM 2
 #define MAX_PROCESSES 100
-#define MEMORY_SIZE 1024
+#define MAX_LINE_LENGTH 100
 
-// Process Control Block (PCB)
-typedef struct {
-    int id;
+typedef struct Process {
+    int pid;
     int arrival_time;
     int priority;
-    int execution_time;
-    int memory_required;
-    int resources;
+    int exec_time;
+    int mem_req;
+    int remaining_time;
+    struct Process* next;
 } Process;
 
-// Queue structure
 typedef struct {
-    Process processes[MAX_PROCESSES];
-    int front, rear;
-} Queue;
+    int start;
+    int size;
+} MemoryBlock;
 
-// Initialize queue
-void initQueue(Queue *q) {
-    q->front = q->rear = -1;
+MemoryBlock free_memory[TOTAL_MEMORY];
+int free_memory_count = 1;
+Process* real_time_queue = NULL;
+Process* priority_queues[3] = {NULL, NULL, NULL};
+
+void insert_process(Process** queue, Process* process) {
+    process->next = *queue;
+    *queue = process;
 }
 
-// Check if queue is empty
-int isEmpty(Queue *q) {
-    return q->front == -1;
+Process* remove_process(Process** queue) {
+    if (*queue == NULL) return NULL;
+    Process* temp = *queue;
+    *queue = (*queue)->next;
+    return temp;
 }
 
-// Enqueue process
-void enqueue(Queue *q, Process p) {
-    if (q->rear == MAX_PROCESSES - 1) {
-        printf("Queue overflow!\n");
+bool allocate_memory(int pid, int size) {
+    for (int i = 0; i < free_memory_count; i++) {
+        if (free_memory[i].size >= size) {
+            free_memory[i].start += size;
+            free_memory[i].size -= size;
+            return true;
+        }
+    }
+    return false;
+}
+
+void release_memory(int pid, int size) {
+    free_memory[free_memory_count].start = 0;
+    free_memory[free_memory_count].size = size;
+    free_memory_count++;
+}
+
+void submit_job(Process* process) {
+    if (!allocate_memory(process->pid, process->mem_req)) {
+        printf("Process %d rejected due to insufficient memory.\n", process->pid);
         return;
     }
-    if (isEmpty(q)) q->front = 0;
-    q->processes[++q->rear] = p;
+    if (process->priority == 0)
+        insert_process(&real_time_queue, process);
+    else
+        insert_process(&priority_queues[0], process);
 }
 
-// Dequeue process
-Process dequeue(Queue *q) {
-    if (isEmpty(q)) {
-        printf("Error: Attempted to dequeue from an empty queue!\n");
-        exit(1);  // Prevent segmentation fault
+Process* schedule() {
+    if (real_time_queue)
+        return remove_process(&real_time_queue);
+    for (int i = 0; i < 3; i++) {
+        if (priority_queues[i])
+            return remove_process(&priority_queues[i]);
     }
-    Process p = q->processes[q->front];
-    if (q->front >= q->rear) initQueue(q);  // Reset queue if last element is dequeued
-    else q->front++;
-    return p;
+    return NULL;
 }
 
-// Memory allocation
-int memory[MEMORY_SIZE] = {0};
-int allocateMemory(int size) {
-    for (int i = 0; i < MEMORY_SIZE - size; i++) {
-        int free = 1;
-        for (int j = 0; j < size; j++) {
-            if (memory[i + j]) {
-                free = 0;
-                break;
-            }
-        }
-        if (free) {
-            for (int j = 0; j < size; j++) memory[i + j] = 1;
-            return i;
-        }
+void run() {
+    Process* process = schedule();
+    if (!process) {
+        printf("No process to execute.\n");
+        return;
     }
-    return -1;
+    int time_quantum = (process->priority > 0) ? TIME_QUANTUM : process->exec_time;
+    process->remaining_time -= time_quantum;
+    printf("Executing process %d for %d units.\n", process->pid, time_quantum);
+    if (process->remaining_time > 0 && process->priority > 0) {
+        int new_priority = (process->priority + 1 < 3) ? process->priority + 1 : 2;
+        insert_process(&priority_queues[new_priority], process);
+    } else {
+        release_memory(process->pid, process->mem_req);
+        printf("Process %d completed and memory released.\n", process->pid);
+    }
 }
 
-// Load processes into the correct queues
-void loadProcesses(const char *filename, Queue *real_time, Queue *priority_queues[3]) {
-    FILE *file = fopen(filename, "r");
+void load_dispatch_list(const char* filename) {
+    FILE* file = fopen(filename, "r");
     if (!file) {
-        printf("Error opening file!\n");
-        return;
+        perror("Failed to open dispatch list");
+        exit(1);
     }
-    Process p;
-    while (fscanf(file, "%d,%d,%d,%d,%d,%d", &p.id, &p.arrival_time, &p.priority, &p.execution_time, &p.memory_required, &p.resources) == 6) {
-        if (p.priority == 0) {
-            enqueue(real_time, p);
-        } else if (p.priority >= 1 && p.priority <= 3) {
-            enqueue(&priority_queues[p.priority - 1], p);
+    char line[MAX_LINE_LENGTH];
+    while (fgets(line, sizeof(line), file)) {
+        Process* p = (Process*)malloc(sizeof(Process));
+        if (sscanf(line, "%d %d %d %d %d", &p->pid, &p->arrival_time, &p->priority, &p->exec_time, &p->mem_req) == 5) {
+            p->remaining_time = p->exec_time;
+            p->next = NULL;
+            submit_job(p);
         } else {
-            printf("Invalid priority level for Process %d\n", p.id);
+            free(p);
         }
     }
     fclose(file);
 }
 
-// Dispatcher
-void dispatcher(Queue *real_time, Queue *priority_queues[3]) {
-    while (!isEmpty(real_time) || !isEmpty(priority_queues[0]) || !isEmpty(priority_queues[1]) || !isEmpty(priority_queues[2])) {
-        if (!isEmpty(real_time)) {
-            Process p = dequeue(real_time);
-            printf("Executing Real-Time Process %d\n", p.id);
-        } else {
-            for (int i = 0; i < 3; i++) {
-                if (!isEmpty(priority_queues[i])) {
-                    Process p = dequeue(priority_queues[i]);
-                    printf("Executing User Process %d from Priority %d Queue\n", p.id, i + 1);
-                    break;
-                }
-            }
-        }
-    }
-}
-
 int main() {
-    Queue real_time, priority_queues[3];
-    initQueue(&real_time);
-    for (int i = 0; i < 3; i++) initQueue(&priority_queues[i]);
-
-    // Load processes from file
-    loadProcesses("dispatch_list.txt", &real_time, priority_queues);
-    
-    // Dispatch processes
-    dispatcher(&real_time, priority_queues);
+    free_memory[0] = (MemoryBlock){0, TOTAL_MEMORY};
+    load_dispatch_list("dispatch_list.txt");
+    for (int i = 0; i < 10; i++) {
+        run();
+    }
     return 0;
 }
