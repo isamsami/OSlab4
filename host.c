@@ -53,7 +53,6 @@ Process dequeue(Queue *q) {
     return p;
 }
 
-
 // Memory allocation
 int memory[MEMORY_SIZE] = {0};
 int allocateMemory(int size) {
@@ -73,16 +72,22 @@ int allocateMemory(int size) {
     return -1;
 }
 
-// Load processes from file
-void loadProcesses(const char *filename, Queue *queue) {
+// Load processes into the correct queues
+void loadProcesses(const char *filename, Queue *real_time, Queue *priority_queues[3]) {
     FILE *file = fopen(filename, "r");
     if (!file) {
         printf("Error opening file!\n");
         return;
     }
     Process p;
-    while (fscanf(file, "%d,%d,%d,%d,%d,%d", &p.id, &p.arrival_time, &p.priority, &p.execution_time, &p.memory_required, &p.resources) != EOF) {
-        enqueue(queue, p);
+    while (fscanf(file, "%d,%d,%d,%d,%d,%d", &p.id, &p.arrival_time, &p.priority, &p.execution_time, &p.memory_required, &p.resources) == 6) {
+        if (p.priority == 0) {
+            enqueue(real_time, p);
+        } else if (p.priority >= 1 && p.priority <= 3) {
+            enqueue(&priority_queues[p.priority - 1], p);
+        } else {
+            printf("Invalid priority level for Process %d\n", p.id);
+        }
     }
     fclose(file);
 }
@@ -110,8 +115,8 @@ int main() {
     initQueue(&real_time);
     for (int i = 0; i < 3; i++) initQueue(&priority_queues[i]);
 
-    // Load processes from file (assumed "dispatch_list.txt")
-    loadProcesses("dispatch_list.txt", &real_time);
+    // Load processes from file
+    loadProcesses("dispatch_list.txt", &real_time, priority_queues);
     
     // Dispatch processes
     dispatcher(&real_time, priority_queues);
