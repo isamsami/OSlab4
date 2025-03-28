@@ -43,11 +43,16 @@ void enqueue(Queue *q, Process p) {
 
 // Dequeue process
 Process dequeue(Queue *q) {
+    if (isEmpty(q)) {
+        printf("Error: Attempted to dequeue from an empty queue!\n");
+        exit(1);  // Prevent segmentation fault
+    }
     Process p = q->processes[q->front];
     if (q->front >= q->rear) initQueue(q);  // Reset queue if last element is dequeued
     else q->front++;
     return p;
 }
+
 
 // Memory allocation
 int memory[MEMORY_SIZE] = {0};
